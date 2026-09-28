@@ -44,10 +44,23 @@
 </head>
 <body>
 
+<div id="tokenGateScreen" style="display:none; min-height:100vh; align-items:center; justify-content:center; background:#eef1f6;">
+  <div class="card" style="width:400px;">
+    <div style="font-weight:700; font-size:16px; margin-bottom:4px;">🔑 이 브라우저는 처음이네요</div>
+    <div style="font-size:12.5px; color:#888; margin-bottom:16px;">데이터 저장소가 비공개라 확인하려면 토큰이 필요합니다. 이미 사용 중인 시스템이라면, 기존에 발급받은 토큰을 입력해 데이터를 불러오세요.</div>
+    <label>GitHub Personal Access Token</label>
+    <input id="gate_token" type="password" placeholder="github_pat_..." style="width:100%;" />
+    <div class="notice">이 저장소(attendance-classifier)에 대해 Contents: Read and write 권한이 있는 토큰이어야 합니다. 이 브라우저에만 저장됩니다.</div>
+    <button class="primary" id="gateBtn" style="width:100%; margin-top:14px;">확인</button>
+    <div id="gateMsg" style="color:#c62828; font-size:12.5px; margin-top:10px;"></div>
+  </div>
+</div>
+
 <div id="bootScreen" style="display:none; min-height:100vh; align-items:center; justify-content:center; background:#eef1f6;">
   <div class="card" style="width:400px;">
     <div style="font-weight:700; font-size:16px; margin-bottom:4px;">🏭 최초 설정</div>
     <div style="font-size:12.5px; color:#888; margin-bottom:16px;">이 저장소에 데이터가 아직 없습니다. 관리자 계정과 GitHub 토큰을 등록하면 시작할 수 있습니다.</div>
+    <div class="notice" style="background:#fdeaea; color:#c62828;">이미 사용 중인 시스템인데 이 화면이 떴다면 절대 진행하지 마세요 — 기존 데이터가 지워집니다. 토큰이 이 저장소(Contents: Read and write) 권한을 정확히 갖고 있는지, 저장소 이름을 정확히 발급했는지부터 다시 확인해주세요.</div>
     <label>GitHub Personal Access Token</label>
     <input id="boot_token" type="password" placeholder="github_pat_..." style="width:100%;" />
     <div class="notice">Fine-grained 토큰, 이 저장소(attendance-classifier)에 대해 Contents: Read and write 권한으로 발급하세요. 이 브라우저에만 저장되며 GitHub로만 전송됩니다.</div>
@@ -293,13 +306,36 @@ let session = null;
 (async function init() {
   const users = await readJSON(PATHS.users, null);
   if (users === null) {
-    document.getElementById('bootScreen').style.display = 'flex';
+    if (getToken()) {
+      // 이미 토큰이 있는데도 못 읽었다면 정말 데이터가 없거나 권한 문제인 것 -> 최초 설정 화면
+      document.getElementById('bootScreen').style.display = 'flex';
+    } else {
+      // 토큰이 아직 없어서 못 읽었을 수 있으니, 먼저 토큰만 확인해본다 (기존 데이터를 지우지 않기 위한 안전장치)
+      document.getElementById('tokenGateScreen').style.display = 'flex';
+    }
   } else {
     const raw = sessionStorage.getItem('slog_session');
     if (raw) { session = JSON.parse(raw); enterApp(); }
     else document.getElementById('loginScreen').style.display = 'flex';
   }
 })();
+
+document.getElementById('gateBtn').onclick = async () => {
+  const token = document.getElementById('gate_token').value.trim();
+  const msg = document.getElementById('gateMsg');
+  if (!token) { msg.textContent = '토큰을 입력하세요.'; return; }
+  setToken(token);
+  const users = await readJSON(PATHS.users, null);
+  document.getElementById('tokenGateScreen').style.display = 'none';
+  if (users === null) {
+    // 토큰이 있어도 못 읽었다면: 정말 첫 설치이거나, 토큰 권한/저장소 이름이 잘못된 것
+    document.getElementById('bootScreen').style.display = 'flex';
+  } else {
+    const raw = sessionStorage.getItem('slog_session');
+    if (raw) { session = JSON.parse(raw); enterApp(); }
+    else document.getElementById('loginScreen').style.display = 'flex';
+  }
+};
 
 document.getElementById('bootBtn').onclick = async () => {
   const token = document.getElementById('boot_token').value.trim();
