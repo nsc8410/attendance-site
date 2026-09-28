@@ -307,8 +307,13 @@ let session = null;
   const users = await readJSON(PATHS.users, null);
   if (users === null) {
     if (getToken()) {
-      // 이미 토큰이 있는데도 못 읽었다면 정말 데이터가 없거나 권한 문제인 것 -> 최초 설정 화면
+      // 이미 저장된 토큰이 있는데도 못 읽었다면: 원인을 진단해서 보여주고, 안전을 위해 바로 최초설정으로 넘기지 않는다.
+      const diag = await diagnoseToken(getToken());
       document.getElementById('bootScreen').style.display = 'flex';
+      const bm = document.getElementById('bootMsg');
+      bm.textContent = `저장된 토큰으로 기존 데이터를 확인하지 못했습니다: ${diag.message}`;
+      const boot_token = document.getElementById('boot_token');
+      if (boot_token) boot_token.value = getToken();
     } else {
       // 토큰이 아직 없어서 못 읽었을 수 있으니, 먼저 토큰만 확인해본다 (기존 데이터를 지우지 않기 위한 안전장치)
       document.getElementById('tokenGateScreen').style.display = 'flex';
@@ -320,15 +325,38 @@ let session = null;
   }
 })();
 
+async function diagnoseToken(token) {
+  try {
+    const res = await fetch(`${GH_API}/contents/${PATHS.users}?ref=${GH_BRANCH}&_=${Date.now()}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+      cache: 'no-store'
+    });
+    if (res.status === 404) return { status: 404, message: `404 - 저장소(${GH_OWNER}/${GH_REPO}) 또는 data/users.json 파일을 못 찾음. 저장소 이름 오타이거나, 토큰이 이 저장소에 대한 접근 권한이 없을 수 있습니다.` };
+    if (res.status === 401) return { status: 401, message: '401 - 토큰이 잘못됐거나(오타/복사 실수) 만료됨.' };
+    if (res.status === 403) return { status: 403, message: '403 - 토큰 권한 부족. 발급할 때 이 저장소에 대해 Contents: Read and write 권한을 선택했는지 다시 확인하세요.' };
+    if (res.ok) return { status: 200, message: '정상 (데이터를 찾았습니다)' };
+    return { status: res.status, message: `${res.status} - 알 수 없는 오류` };
+  } catch (err) {
+    return { status: 0, message: '네트워크 오류: ' + (err.message || err) };
+  }
+}
+
 document.getElementById('gateBtn').onclick = async () => {
   const token = document.getElementById('gate_token').value.trim();
   const msg = document.getElementById('gateMsg');
   if (!token) { msg.textContent = '토큰을 입력하세요.'; return; }
+  msg.style.color = '#888';
+  msg.textContent = '확인 중...';
+  const diag = await diagnoseToken(token);
+  if (diag.status !== 200) {
+    msg.style.color = '#c62828';
+    msg.textContent = diag.message;
+    return; // 실패 원인을 보여주고, 최초 설정 화면으로 넘어가지 않는다 (데이터 보호)
+  }
   setToken(token);
   const users = await readJSON(PATHS.users, null);
   document.getElementById('tokenGateScreen').style.display = 'none';
   if (users === null) {
-    // 토큰이 있어도 못 읽었다면: 정말 첫 설치이거나, 토큰 권한/저장소 이름이 잘못된 것
     document.getElementById('bootScreen').style.display = 'flex';
   } else {
     const raw = sessionStorage.getItem('slog_session');
