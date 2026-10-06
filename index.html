@@ -39,6 +39,7 @@
   .summary-grid .box { background:#f7f9fc; border-radius:10px; padding:14px; }
   .summary-grid .box b { display:block; font-size:12px; color:#888; margin-bottom:4px; font-weight:600; }
   .summary-grid .box span { font-size:20px; font-weight:700; color:#2f4f8f; }
+  .secret { -webkit-text-security: disc; text-security: disc; }
   .notice { background:#fff8e8; border-radius:8px; padding:10px 14px; font-size:12.5px; color:#8a5a00; margin-top:10px; }
 </style>
 </head>
@@ -49,7 +50,7 @@
     <div style="font-weight:700; font-size:16px; margin-bottom:4px;">🔑 이 브라우저는 처음이네요</div>
     <div style="font-size:12.5px; color:#888; margin-bottom:16px;">데이터 저장소가 비공개라 확인하려면 토큰이 필요합니다. 이미 사용 중인 시스템이라면, 기존에 발급받은 토큰을 입력해 데이터를 불러오세요.</div>
     <label>GitHub Personal Access Token</label>
-    <input id="gate_token" type="password" placeholder="github_pat_..." style="width:100%;" />
+    <input id="gate_token" class="secret" type="text" name="gh-access-token" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_..." style="width:100%;" />
     <div class="notice">이 저장소(attendance-classifier)에 대해 Contents: Read and write 권한이 있는 토큰이어야 합니다. 이 브라우저에만 저장됩니다.</div>
     <button class="primary" id="gateBtn" style="width:100%; margin-top:14px;">확인</button>
     <div id="gateMsg" style="color:#c62828; font-size:12.5px; margin-top:10px;"></div>
@@ -62,7 +63,7 @@
     <div style="font-size:12.5px; color:#888; margin-bottom:16px;">이 저장소에 데이터가 아직 없습니다. 관리자 계정과 GitHub 토큰을 등록하면 시작할 수 있습니다.</div>
     <div class="notice" style="background:#fdeaea; color:#c62828;">이미 사용 중인 시스템인데 이 화면이 떴다면 절대 진행하지 마세요 — 기존 데이터가 지워집니다. 토큰이 이 저장소(Contents: Read and write) 권한을 정확히 갖고 있는지, 저장소 이름을 정확히 발급했는지부터 다시 확인해주세요.</div>
     <label>GitHub Personal Access Token</label>
-    <input id="boot_token" type="password" placeholder="github_pat_..." style="width:100%;" />
+    <input id="boot_token" class="secret" type="text" name="gh-access-token" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_..." style="width:100%;" />
     <div class="notice">Fine-grained 토큰, 이 저장소(attendance-classifier)에 대해 Contents: Read and write 권한으로 발급하세요. 이 브라우저에만 저장되며 GitHub로만 전송됩니다.</div>
     <label>관리자 사번</label><input id="boot_id" style="width:100%;" />
     <label>관리자 이름</label><input id="boot_name" style="width:100%;" />
@@ -114,12 +115,15 @@
     <h1 id="pageTitle" style="font-size:24px; margin:14px 0 4px;"></h1>
     <div id="pageDesc" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
     <div class="row-flex" style="margin-bottom:16px; flex-wrap:wrap;">
+      <button class="tabbtn ghost" data-tab="diagnosis">자동 진단</button>
+      <button class="tabbtn ghost" data-tab="roster">자동 연명부</button>
       <button class="tabbtn ghost" data-tab="events">일정 게시판</button>
       <button class="tabbtn ghost" data-tab="participation">참여 현황</button>
       <button class="tabbtn ghost" data-tab="aggregate">전체 집계</button>
       <button class="tabbtn ghost" data-tab="members">조합원 명단</button>
       <button class="tabbtn ghost" data-tab="users">사용자 설정</button>
     </div>
+    <div id="dxBanner" class="card" style="display:none;margin-bottom:16px" aria-live="polite"></div>
     <div id="content"></div>
   </div>
 </div>
@@ -438,7 +442,7 @@ async function doLogin() {
 }
 
 function isAdmin() { return !!session && session.role === '관리자'; }
-const ADMIN_ONLY_TABS = ['participation', 'aggregate', 'members', 'users'];
+const ADMIN_ONLY_TABS = ['participation', 'aggregate', 'members', 'users', 'diagnosis', 'roster'];
 
 function enterApp() {
   document.getElementById('bootScreen').style.display = 'none';
@@ -449,7 +453,10 @@ function enterApp() {
   document.querySelectorAll('.tabbtn').forEach(b => {
     if (ADMIN_ONLY_TABS.includes(b.dataset.tab) && !isAdmin()) b.style.display = 'none';
   });
+  const dxb = document.getElementById('dxBanner');
+  if (dxb) dxb.style.display = isAdmin() ? '' : 'none';
   goTab('events');
+  if (isAdmin()) dxBanner(); // 로그인할 때 한 번만 자동 검사 (저장할 때마다 다시 읽지 않음)
 }
 
 document.getElementById('logoutBtn').onclick = () => {
@@ -468,7 +475,9 @@ const TAB_META = {
   participation: ['참여 현황', '최근 일정별 참여 인원을 확인합니다.'],
   aggregate: ['전체 집계', '기간을 지정해 개인별 참여시간과 지급액을 합산합니다.'],
   members: ['조합원 명단', '사번은 정확일치, 이름은 앞글자부터 검색할 수 있습니다.'],
-  users: ['사용자 설정', 'GitHub 연결, 사용자 권한, 시간당 지급액을 관리합니다.']
+  users: ['사용자 설정', 'GitHub 연결, 사용자 권한, 시간당 지급액을 관리합니다.'],
+  diagnosis: ['자동 진단', '전체 데이터를 자동 검사하고 지단별 참여율을 분석합니다.'],
+  roster: ['자동 연명부', '행사를 선택하면 지단별 참석 연명부를 생성합니다.']
 };
 
 function goTab(tab) {
@@ -484,13 +493,17 @@ function goTab(tab) {
   if (tab === 'aggregate') renderAggregate(content);
   if (tab === 'members') renderMembers(content);
   if (tab === 'users') renderUsers(content);
+  if (tab === 'diagnosis') renderDiagnosis(content);
+  if (tab === 'roster') renderRoster(content);
 }
 
 // ============================================================
 // 일정 게시판
 // ============================================================
 // start/end는 정시(0~23) 정수. 점심시간(12시~13시)과 겹치는 만큼 자동으로 제외한다.
-function fmtHour(h) { return String(h).padStart(2, '0') + '시'; }
+// 화면(HTML)에 데이터를 끼워 넣을 때는 esc()를 거친다. (엑셀로 올린 이름 등에 섞인 특수문자가 코드로 실행되는 것을 막음)
+function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtHour(h) { return esc(String(h).padStart(2, '0')) + '시'; }
 
 function computeHours(start, end) {
   let total = end - start;
@@ -532,12 +545,12 @@ async function renderEvents(content, offset = 0, preset = null) {
           <div style="padding:14px 0; border-top:1px solid #edf0f4;">
             <div class="row-flex" style="justify-content:space-between;">
               <div>
-                <div class="link" style="font-weight:700; font-size:14.5px;" data-open="${ev.id}">${ev.name}</div>
-                <div style="font-size:12px; color:#888; margin-top:3px;">${ev.date} · ${fmtHour(ev.start)}~${fmtHour(ev.end)} · ${ev.hours}시간 · 등록 ${ev.regName} (${ev.regId})</div>
+                <div class="link" style="font-weight:700; font-size:14.5px;" data-open="${esc(ev.id)}">${esc(ev.name)}</div>
+                <div style="font-size:12px; color:#888; margin-top:3px;">${esc(ev.date)} · ${fmtHour(ev.start)}~${fmtHour(ev.end)} · ${esc(ev.hours)}시간 · 등록 ${esc(ev.regName)} (${esc(ev.regId)})</div>
               </div>
               <div class="row-flex">
                 <span class="badge full">참석 ${countMap[ev.id] || 0}명</span>
-                ${isAdmin() ? `<button class="icon danger" data-del="${ev.id}">삭제</button>` : ''}
+                ${isAdmin() ? `<button class="icon danger" data-del="${esc(ev.id)}">삭제</button>` : ''}
               </div>
             </div>
           </div>`).join('')}
@@ -647,8 +660,8 @@ async function openEventDetail(id, content) {
   const ev = events.find(x => x.id === id);
   let count = attendance.filter(a => a.eventId === id).length;
   bg.querySelector('.modal').innerHTML = `
-    <h3 style="margin-top:0;">${ev ? ev.name : ''}</h3>
-    <div style="font-size:12.5px; color:#888; margin-bottom:12px;" id="e_meta">${ev ? `${ev.date} · ${fmtHour(ev.start)}~${fmtHour(ev.end)} · ${ev.hours}시간 · 참석 ${count}명` : ''}</div>
+    <h3 style="margin-top:0;">${ev ? esc(ev.name) : ''}</h3>
+    <div style="font-size:12.5px; color:#888; margin-bottom:12px;" id="e_meta">${ev ? `${esc(ev.date)} · ${fmtHour(ev.start)}~${fmtHour(ev.end)} · ${esc(ev.hours)}시간 · 참석 ${count}명` : ''}</div>
     <input type="file" id="attFile" accept=".xls,.xlsx" style="display:none" />
     <button class="ghost" id="attUploadBtn">📤 참석자 명단 업로드 (사번 목록 엑셀)</button>
     <div id="uploadResult" style="font-size:12.5px; margin-top:8px;"></div>
@@ -694,7 +707,7 @@ async function openEventDetail(id, content) {
     attendance = updatedAttendance;
     count = attendance.filter(a => a.eventId === id).length;
     bg.querySelector('#e_meta').textContent = ev ? `${ev.date} · ${fmtHour(ev.start)}~${fmtHour(ev.end)} · ${ev.hours}시간 · 참석 ${count}명` : '';
-    resDiv.innerHTML = `매칭 ${matched}명 등록${duplicated ? `, 중복 ${duplicated}건 제외` : ''}${unmatched.length ? `, 명단에 없는 사번 ${unmatched.length}건: ${unmatched.join(', ')}` : ''}`;
+    resDiv.innerHTML = `매칭 ${matched}명 등록${duplicated ? `, 중복 ${duplicated}건 제외` : ''}${unmatched.length ? `, 명단에 없는 사번 ${unmatched.length}건: ${esc(unmatched.join(', '))}` : ''}`;
   }
 
   bg.querySelector('#manualAddBtn').onclick = async () => {
@@ -746,7 +759,7 @@ async function renderParticipation(content) {
           </div>`).join('')}
       </div>
       <div style="display:flex; gap:16px; padding:10px 10px 0;">
-        ${last12.map(i => `<div style="flex:1; text-align:center; font-size:11.5px; color:#888;">${i.date}<br/><span style="font-size:10.5px;">${i.name}</span></div>`).join('')}
+        ${last12.map(i => `<div style="flex:1; text-align:center; font-size:11.5px; color:#888;">${esc(i.date)}<br/><span style="font-size:10.5px;">${esc(i.name)}</span></div>`).join('')}
       </div>
     </div>`;
 }
@@ -978,7 +991,7 @@ async function renderMembers(content, offset = 0, q = '', presetAll = null) {
       </div>
       <div style="font-size:12px; color:#888; margin-bottom:10px;">계좌정보 일괄 등록: 사번·은행·계좌번호·예금주(선택)만 있는 엑셀을 올리면, 나머지 정보는 그대로 두고 사번이 일치하는 조합원의 계좌정보만 채워집니다.</div>
       <div class="row-flex" style="margin-bottom:14px;">
-        <input id="mq" placeholder="사번 또는 이름 검색" style="flex:1;" value="${q}" />
+        <input id="mq" placeholder="사번 또는 이름 검색" style="flex:1;" value="${esc(q)}" />
         <button class="ghost" id="mSearchBtn">검색</button>
         <input type="file" id="replaceFile" accept=".xls,.xlsx" style="display:none" />
         <input type="file" id="bankFile" accept=".xls,.xlsx" style="display:none" />
@@ -1011,11 +1024,11 @@ async function renderMembers(content, offset = 0, q = '', presetAll = null) {
         const has1 = !!m.phone, has2 = !!(m.bank && m.account);
         const status = has1 && has2 ? '<span class="badge full">등록완료</span>' : (has1 || has2) ? '<span class="badge part">일부 등록</span>' : '<span class="badge none">미등록</span>';
         return `<tr>
-          <td>${m.group || ''}</td><td>${m.empId}</td><td>${m.name}</td><td>${m.dept || ''}</td><td>${status}</td>
+          <td>${esc(m.group)}</td><td>${esc(m.empId)}</td><td>${esc(m.name)}</td><td>${esc(m.dept)}</td><td>${status}</td>
           <td class="row-flex">
-            <button class="icon ghost" data-history="${m.empId}">출석내역</button>
-            <button class="icon ghost" data-edit="${m.empId}">정보수정</button>
-            <button class="icon danger" data-del="${m.empId}">삭제</button>
+            <button class="icon ghost" data-history="${esc(m.empId)}">출석내역</button>
+            <button class="icon ghost" data-edit="${esc(m.empId)}">정보수정</button>
+            <button class="icon danger" data-del="${esc(m.empId)}">삭제</button>
           </td>
         </tr>`;
       }).join('')}</tbody>
@@ -1059,14 +1072,14 @@ async function openMemberHistoryModal(empId, name) {
   const totalHours = myRecords.reduce((s, e) => s + (Number(e.hours) || 0), 0);
 
   bg.querySelector('.modal').innerHTML = `
-    <h3 style="margin-top:0;">${name} (${empId}) 출석내역</h3>
+    <h3 style="margin-top:0;">${esc(name)} (${esc(empId)}) 출석내역</h3>
     <div style="font-size:12.5px; color:#888; margin-bottom:12px;">전체 등록 일정 ${events.length}건 중 참석 ${myRecords.length}건 · 총 ${totalHours}시간</div>
     <div style="max-height:360px; overflow-y:auto; border:1px solid #edf0f4; border-radius:8px;">
       ${myRecords.length === 0 ? '<div class="empty">참석한 일정이 없습니다.</div>' : `
       <table>
         <thead><tr><th>날짜</th><th>행사명</th><th>시간</th></tr></thead>
         <tbody>${myRecords.map(e => `
-          <tr><td>${e.date}</td><td>${e.name}</td><td>${fmtHour(e.start)}~${fmtHour(e.end)} (${e.hours}시간)</td></tr>`).join('')}</tbody>
+          <tr><td>${esc(e.date)}</td><td>${esc(e.name)}</td><td>${fmtHour(e.start)}~${fmtHour(e.end)} (${esc(e.hours)}시간)</td></tr>`).join('')}</tbody>
       </table>`}
     </div>
     <div class="actions"><button class="ghost" id="mh_close" style="flex:1;">닫기</button></div>`;
@@ -1079,16 +1092,16 @@ function openMemberModal(m, currentAll, content, offset, q) {
   bg.innerHTML = `
     <div class="modal">
       <h3 style="margin-top:0;">조합원 정보 수정</h3>
-      <label>지단</label><input id="mm_group" value="${m.group || ''}" />
-      <label>사번</label><input id="mm_id" value="${m.empId}" disabled />
-      <label>성명</label><input id="mm_name" value="${m.name || ''}" />
-      <label>소속</label><input id="mm_dept" value="${m.dept || ''}" />
-      <label>전화번호</label><input id="mm_phone" value="${m.phone || ''}" />
+      <label>지단</label><input id="mm_group" value="${esc(m.group)}" />
+      <label>사번</label><input id="mm_id" value="${esc(m.empId)}" disabled />
+      <label>성명</label><input id="mm_name" value="${esc(m.name)}" />
+      <label>소속</label><input id="mm_dept" value="${esc(m.dept)}" />
+      <label>전화번호</label><input id="mm_phone" value="${esc(m.phone)}" />
       <div class="row-flex">
-        <div style="flex:1;"><label>은행</label><input id="mm_bank" value="${m.bank || ''}" /></div>
-        <div style="flex:1.4;"><label>계좌번호</label><input id="mm_account" value="${m.account || ''}" /></div>
+        <div style="flex:1;"><label>은행</label><input id="mm_bank" value="${esc(m.bank)}" /></div>
+        <div style="flex:1.4;"><label>계좌번호</label><input id="mm_account" value="${esc(m.account)}" /></div>
       </div>
-      <label>예금주</label><input id="mm_holder" value="${m.holder || ''}" />
+      <label>예금주</label><input id="mm_holder" value="${esc(m.holder)}" />
       <div class="actions">
         <button class="ghost" id="mm_cancel">취소</button>
         <button class="primary" id="mm_save">저장</button>
@@ -1223,7 +1236,7 @@ async function renderUsers(content, preset = null) {
       <div style="font-weight:700; font-size:15px; margin-bottom:2px;">지급 설정</div>
       <div style="font-size:12.5px; color:#888; margin-bottom:12px;">모든 일정과 기간 전체 집계에 공통으로 적용됩니다.</div>
       <div class="row-flex">
-        <input id="rateInput" type="number" value="${settings.rate}" style="width:160px;" />
+        <input id="rateInput" type="number" value="${esc(settings.rate)}" style="width:160px;" />
         <span style="font-size:13px;">원 / 1시간</span>
         <button class="primary" id="rateSaveBtn">저장</button>
       </div>
@@ -1238,8 +1251,8 @@ async function renderUsers(content, preset = null) {
         <table>
           <thead><tr><th>사번</th><th>이름</th><th>권한</th><th>상태</th><th></th></tr></thead>
           <tbody>${users.map(u => `
-            <tr><td>${u.empId}</td><td>${u.name}</td><td>${u.role}</td><td>${u.status}</td>
-            <td class="row-flex"><button class="icon ghost" data-edit="${u.empId}">수정</button><button class="icon danger" data-del="${u.empId}">삭제</button></td></tr>`).join('')}</tbody>
+            <tr><td>${esc(u.empId)}</td><td>${esc(u.name)}</td><td>${esc(u.role)}</td><td>${esc(u.status)}</td>
+            <td class="row-flex"><button class="icon ghost" data-edit="${esc(u.empId)}">수정</button><button class="icon danger" data-del="${esc(u.empId)}">삭제</button></td></tr>`).join('')}</tbody>
         </table>
       </div>
     </div>`;
@@ -1275,8 +1288,8 @@ function openEditUserModal(content, currentUsers, currentSettings, u) {
   bg.innerHTML = `
     <div class="modal">
       <h3 style="margin-top:0;">사용자 수정</h3>
-      <label>사번</label><input id="eu_id" value="${u.empId}" disabled />
-      <label>이름</label><input id="eu_name" value="${u.name || ''}" />
+      <label>사번</label><input id="eu_id" value="${esc(u.empId)}" disabled />
+      <label>이름</label><input id="eu_name" value="${esc(u.name)}" />
       <label>권한</label>
       <select id="eu_role">
         <option value="관리자" ${u.role === '관리자' ? 'selected' : ''}>관리자</option>
@@ -1329,7 +1342,7 @@ function openTokenModal(onDone) {
     <div class="modal">
       <h3 style="margin-top:0;">GitHub 토큰 등록</h3>
       <div class="notice">github.com → Settings → Developer settings → Fine-grained tokens에서 이 저장소(${GH_REPO})에 대해 Contents: Read and write 권한으로 발급하세요. 토큰은 이 브라우저에만 저장됩니다.</div>
-      <label>Personal Access Token</label><input id="tk_val" type="password" placeholder="github_pat_..." />
+      <label>Personal Access Token</label><input id="tk_val" class="secret" type="text" name="gh-access-token" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_..." />
       <div class="actions">
         <button class="ghost" id="tk_cancel">취소</button>
         <button class="primary" id="tk_save">저장</button>
@@ -1376,6 +1389,42 @@ function openAddUserModal(content, currentUsers, currentSettings) {
     renderUsers(content, { users: newUsers, settings: currentSettings });
   };
 }
+// 자동 진단과 연명부: 원본 데이터는 수정하지 않고 분석합니다.
+const dxKey = v => String(v ?? '').trim().toUpperCase();
+const dxEsc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function diagnoseData(members, events, attendance, settings) {
+  const issues=[], mm=new Map(), em=new Map(), seen=new Set(), valid=[], participants=new Set();
+  const issue=(level,type,id,detail)=>issues.push({level,type,id:String(id??''),detail});
+  members.forEach((m,i)=>{const k=dxKey(m.empId); if(!k) issue('오류','사번 누락',i+1,'명단 행 번호'); else if(mm.has(k)) issue('오류','중복 사번',k,'명단에서 중복된 사번'); else mm.set(k,m); if(!String(m.name??'').trim()) issue('오류','이름 누락',k,'조합원 이름이 비어 있음'); if(!String(m.group??'').trim()||!String(m.dept??'').trim()) issue('주의','소속 누락',k,'지단 또는 소속이 비어 있음');});
+  events.forEach(e=>{const k=dxKey(e.id); if(!k||em.has(k)) issue('오류','행사 ID 오류',k,'행사 ID 누락 또는 중복'); else em.set(k,e); const h=Number(e.hours); const date=String(e.date??''); if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date) issue('오류','행사 날짜 오류',k,date); if(e.hours==null||e.hours===''||!Number.isFinite(h)||h<=0||h>24) issue('오류','참여시간 오류',k,String(e.hours)); else if(!Number.isFinite(Number(e.start))||!Number.isFinite(Number(e.end))||Number(e.start)<0||Number(e.end)>24||Number(e.start)>23||Number(e.end)<0||Number(e.end)===Number(e.start)||Math.abs(computeHours(Number(e.start),Number(e.end))-h)>.001) issue('주의','행사 시간 불일치',k,'시작·종료 시간과 점심 제외 참여시간 확인');});
+  attendance.forEach((a,i)=>{const k=dxKey(a.empId), ek=dxKey(a.eventId), pair=JSON.stringify([ek,k]), m=mm.get(k), e=em.get(ek); if(seen.has(pair)){issue('오류','동일 행사 중복',k,`${ek} · 출석 행 ${i+1}`);return;} seen.add(pair); if(!m) issue('오류','미등록 사번',k,`행사 ${ek}`); if(!e) issue('오류','행사 누락',k,`존재하지 않는 행사 ${ek}`); if(m&&dxKey(a.name)!==dxKey(m.name)) issue('주의','이름 불일치',k,`출석: ${a.name??'(빈칸)'} / 명단: ${m.name}`); if(m&&e){valid.push({...a,member:m,event:e});participants.add(k);}});
+  const rate=Number(settings.rate); if(settings.rate==null||settings.rate===''||!Number.isFinite(rate)||rate<0) issue('오류','지급단가 오류','설정','시간당 지급액 확인');
+  const counted=new Set(valid.map(a=>dxKey(a.eventId))); events.forEach(e=>{if(!counted.has(dxKey(e.id)))issue('주의','참석기록 없음',e.id,`${e.name??''} · 대상 명단이 없으므로 결석 판정은 하지 않음`);});
+  const groups=new Map(); mm.forEach((m,k)=>{const g=String(m.group||'미지정');if(!groups.has(g))groups.set(g,{group:g,total:0,joined:0});const row=groups.get(g);row.total++;if(participants.has(k))row.joined++;});
+  const ratio=mm.size?participants.size/mm.size*100:0;
+  groups.forEach(g=>{g.rate=g.total?g.joined/g.total*100:0;if(g.total>=10&&ratio-g.rate>=15) issue('참고','지단 참여율 낮음',g.group,`전체보다 ${(ratio-g.rate).toFixed(1)}%p 낮음 (전체 행사 기준)`);});
+  const hours=valid.reduce((sum,a)=>{const h=Number(a.event.hours);return sum+(Number.isFinite(h)&&h>0&&h<=24?h:0);},0);
+  return {issues,valid,groups:[...groups.values()],total:mm.size,joined:participants.size,ratio,hours,pay:Number.isFinite(rate)&&rate>=0?Math.round(hours*rate):null,records:attendance.length};
+}
+async function dxRead(path) {
+  const token=getToken(); const url=token?`${GH_API}/contents/${path}?ref=${GH_BRANCH}&_=${Date.now()}`:`https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/${path}?t=${Date.now()}`;
+  const res=await fetch(url,{cache:'no-store',headers:token?{Authorization:`Bearer ${token}`,Accept:'application/vnd.github+json'}:{}});
+  if(!res.ok)throw new Error(`${path}: 불러오기 실패 (${res.status})`);
+  const value=await res.json();return token?JSON.parse(b64DecodeUnicode(value.content)):value;
+}
+async function dxLoad(){const [m,e,a,s]=await Promise.all([dxRead(PATHS.members),dxRead(PATHS.events),dxRead(PATHS.attendance),dxRead(PATHS.settings)]);if(![m,e,a].every(x=>Array.isArray(x)&&x.every(r=>r&&typeof r==='object'))||!s||typeof s!=='object')throw new Error('데이터 형식이 올바르지 않습니다.');return {members:m,events:e,attendance:a,settings:s,result:diagnoseData(m,e,a,s)};}
+function dxTable(headers,rows){return `<div style="overflow:auto"><table style="width:100%"><thead><tr>${headers.map(h=>`<th>${dxEsc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${dxEsc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;}
+function dxExcel(name,sheets){if(typeof XLSX==='undefined'){alert('Excel 기능을 불러오지 못했습니다. 인터넷 연결 후 새로고침하세요.');return;}const wb=XLSX.utils.book_new();sheets.forEach(([title,rows])=>{const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=rows[0].map(()=>({wch:22}));XLSX.utils.book_append_sheet(wb,ws,title);});XLSX.writeFile(wb,name);}
+async function renderDiagnosis(content){
+  content.innerHTML='<div class="card">전체 데이터 자동 진단 중...</div>';
+  try{const data=await dxLoad();if(!content.isConnected||!document.querySelector('[data-tab="diagnosis"]').classList.contains('primary'))return;const d=data.result;
+  content.innerHTML=`<div class="card"><div class="row-flex" style="justify-content:space-between"><h2>자동 진단 결과</h2><button id="dxRefresh" class="ghost">새로 진단</button></div><p>전체 행사 기준 · ${dxEsc(new Date().toLocaleString('ko-KR'))}</p><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px">${[['조합원',d.total+'명'],['실제 참여자',d.joined+'명'],['참여율',d.ratio.toFixed(2)+'%'],['유효 출석',d.valid.length+'건'],['평균 참여횟수',(d.joined?d.valid.length/d.joined:0).toFixed(2)+'회'],['확인 사항',d.issues.length+'건']].map(([k,v])=>`<div class="card"><div>${k}</div><strong style="font-size:24px">${v}</strong></div>`).join('')}</div><p>원본 출석 ${d.records}건 / 중복·미등록·행사 누락 제외 ${d.valid.length}건. 지급 참고액 ${d.pay===null?'계산 불가':d.pay.toLocaleString()+'원'} (시간 오류 및 이름 불일치는 지급 전 확인).</p></div><div class="card"><h3>지단별 참여율</h3>${dxTable(['지단','명단 인원','참여자','참여율'],d.groups.sort((a,b)=>compareGroup(a.group,b.group)).map(g=>[g.group,g.total,g.joined,g.rate.toFixed(2)+'%']))}</div><div class="card"><div class="row-flex"><h3>자동 오류 검출</h3><select id="dxLevel"><option value="">전체</option><option>오류</option><option>주의</option><option>참고</option></select><button id="dxExport" class="primary">진단 Excel</button></div><p>오류를 자동 삭제하거나 원본을 변경하지 않습니다. 목록은 500건까지 표시하며 Excel에는 전체 결과를 담습니다.</p><div id="dxIssues"></div></div>`;
+  const paint=()=>{const rows=d.issues.filter(i=>!document.getElementById('dxLevel').value||i.level===document.getElementById('dxLevel').value);document.getElementById('dxIssues').innerHTML=rows.length?dxTable(['등급','유형','사번/행사/지단','내용'],rows.slice(0,500).map(i=>[i.level,i.type,i.id,i.detail])):'<p>검출된 확인 사항이 없습니다.</p>';};paint();document.getElementById('dxLevel').onchange=paint;document.getElementById('dxRefresh').onclick=()=>renderDiagnosis(content);document.getElementById('dxExport').onclick=()=>dxExcel('자동진단.xlsx',[['오류목록',[['등급','유형','사번/행사/지단','내용'],...d.issues.map(i=>[i.level,i.type,i.id,i.detail])]],['지단분석',[['지단','명단 인원','참여자','참여율(%)'],...d.groups.map(g=>[g.group,g.total,g.joined,g.rate])]]]);
+  }catch(e){content.innerHTML=`<div class="card">진단을 완료하지 못했습니다. ${dxEsc(e.message)}<p>불러오기 실패를 빈 데이터나 정상 상태로 판단하지 않습니다.</p><button class="ghost" id="dxRetry">다시 시도</button></div>`;document.getElementById('dxRetry').onclick=()=>renderDiagnosis(content);}}
+async function renderRoster(content){content.innerHTML='<div class="card">연명부 준비 중...</div>';try{const data=await dxLoad();const evs=[...data.events].sort((a,b)=>String(b.date??'').localeCompare(String(a.date??''))||String(b.id??'').localeCompare(String(a.id??'')));content.innerHTML=`<div class="card"><h2>행사별 자동 연명부</h2><select id="rsEvent" style="max-width:100%"><option value="">행사를 선택하세요</option>${evs.map((e,i)=>`<option value="${i}">${dxEsc(e.date)} · ${dxEsc(e.name)}</option>`).join('')}</select><button class="primary" id="rsExcel" disabled>Excel 다운로드</button> <button class="ghost" id="rsPrint" disabled>인쇄 / PDF 저장</button><p>지단·사번순으로 정렬하고 동일 행사 중복 사번은 한 번만 표시합니다. 전화번호·계좌정보는 포함하지 않습니다.</p><div id="rsBody"></div></div>`;let chosen=null,rows=[];const headers=['번호','지단','소속','성명','사번','서명'];document.getElementById('rsEvent').onchange=e=>{chosen=e.target.value===''?null:evs[Number(e.target.value)];rows=chosen?data.result.valid.filter(a=>dxKey(a.eventId)===dxKey(chosen.id)).sort((a,b)=>compareGroup(a.member.group,b.member.group)||dxKey(a.empId).localeCompare(dxKey(b.empId))).map((a,i)=>[i+1,a.member.group||'미지정',a.member.dept||'',a.member.name,String(a.member.empId),'']):[];document.getElementById('rsExcel').disabled=document.getElementById('rsPrint').disabled=!chosen;document.getElementById('rsBody').innerHTML=chosen?`<h3>${dxEsc(chosen.name)}</h3><p>${dxEsc(chosen.date)} · ${dxEsc(chosen.start)}시~${dxEsc(chosen.end)}시 · ${dxEsc(chosen.hours)}시간 · ${rows.length}명</p><p>행사 관련 확인 사항 ${data.result.issues.filter(i=>i.id===String(chosen.id)||i.detail.includes(dxKey(chosen.id))).length}건. 미등록 사번·행사 누락은 제외하며 이름은 조합원 명단 기준입니다.</p>${dxTable(headers,rows)}`:'';};document.getElementById('rsExcel').onclick=()=>{if(chosen)dxExcel('행사_연명부.xlsx',[['연명부',[[chosen.name],[chosen.date,`${chosen.start}시~${chosen.end}시`,`${chosen.hours}시간`],headers,...rows]]]);};document.getElementById('rsPrint').onclick=()=>{if(!chosen)return;const w=window.open('','_blank');if(!w){alert('인쇄 창을 열도록 팝업을 허용하세요.');return;}w.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>참석 연명부</title><style>@page{size:A4;margin:15mm}body{font-family:Arial,sans-serif}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #888;padding:9px}thead{display:table-header-group}tr{break-inside:avoid}h1{font-size:22px}</style></head><body><h1>${dxEsc(chosen.name)} 참석 연명부</h1><p>${dxEsc(chosen.date)} / ${dxEsc(chosen.start)}시~${dxEsc(chosen.end)}시 / ${rows.length}명</p>${dxTable(headers,rows)}</body></html>`);w.document.close();w.focus();w.print();};}catch(e){content.innerHTML=`<div class="card">연명부 생성 실패: ${dxEsc(e.message)}</div>`;}}
+let dxSequence=0;
+async function dxBanner(){if(!session||!isAdmin())return;const sequence=++dxSequence;const box=document.getElementById('dxBanner');if(!box)return;box.textContent='데이터 자동 검사 중...';try{const {result:d}=await dxLoad();if(sequence!==dxSequence)return;box.innerHTML=`<strong>자동 진단</strong> · 오류 ${d.issues.filter(i=>i.level==='오류').length}건 / 주의 ${d.issues.filter(i=>i.level==='주의').length}건 · 참여율 ${d.ratio.toFixed(2)}% <button class="ghost" id="dxOpen">결과 보기</button> <button class="ghost" id="dxRecheck">다시 검사</button> <span style="color:#888;font-size:12px">로그인 시점 기준 · 저장 후에는 '다시 검사'</span>`;document.getElementById('dxOpen').onclick=()=>goTab('diagnosis');document.getElementById('dxRecheck').onclick=()=>dxBanner();}catch(e){if(sequence===dxSequence)box.textContent='자동 진단 대기: '+e.message;}}
+
 </script>
 </body>
 </html>
