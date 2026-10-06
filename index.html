@@ -305,40 +305,61 @@ let session = null;
 
 (async function init() {
   const users = await readJSON(PATHS.users, null);
-  if (users === null) {
-    if (getToken()) {
-      // 이미 저장된 토큰이 있는데도 못 읽었다면: 원인을 진단해서 보여주고, 안전을 위해 바로 최초설정으로 넘기지 않는다.
-      const diag = await diagnoseToken(getToken());
-      document.getElementById('bootScreen').style.display = 'flex';
-      const bm = document.getElementById('bootMsg');
-      bm.textContent = `저장된 토큰으로 기존 데이터를 확인하지 못했습니다: ${diag.message}`;
-      const boot_token = document.getElementById('boot_token');
-      if (boot_token) boot_token.value = getToken();
-    } else {
-      // 토큰이 아직 없어서 못 읽었을 수 있으니, 먼저 토큰만 확인해본다 (기존 데이터를 지우지 않기 위한 안전장치)
-      document.getElementById('tokenGateScreen').style.display = 'flex';
-    }
-  } else {
+  if (users !== null) {
     const raw = sessionStorage.getItem('slog_session');
     if (raw) { session = JSON.parse(raw); enterApp(); }
     else document.getElementById('loginScreen').style.display = 'flex';
+    return;
+  }
+  // 데이터를 못 읽은 경우: 원인을 먼저 진단한다. (기존 데이터를 덮어쓸 수 있는 '최초 설정' 화면은
+  // 토큰이 정상이고 저장소에는 접근되는데 users.json만 정말 없을 때만 보여준다.)
+  const token = getToken();
+  if (!token) { showTokenGate(''); return; }
+  const diag = await diagnoseToken(token);
+  if (diag.stage === 'file' && diag.status === 404) {
+    document.getElementById('bootScreen').style.display = 'flex';
+    const boot_token = document.getElementById('boot_token');
+    if (boot_token) boot_token.value = token;
+  } else if (diag.stage === 'ok') {
+    showTokenGate('데이터를 일시적으로 불러오지 못했습니다. 잠시 후 새로고침(F5) 해주세요.');
+  } else {
+    showTokenGate(diag.message);
   }
 })();
 
+// stage: 'repo'(저장소 접근 단계에서 실패) | 'file'(저장소는 접근됐고 users.json 단계) | 'ok'
 async function diagnoseToken(token) {
   try {
+    // 1) 저장소 자체에 접근되는지 먼저 확인 (파일 경로와 무관하게)
+    const repoRes = await fetch(`${GH_API}?_=${Date.now()}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+      cache: 'no-store'
+    });
+    if (repoRes.status === 401) return { stage: 'repo', status: 401, message: '저장된 토큰이 더 이상 유효하지 않습니다(삭제·재발급·만료됐거나 복사 오류). 토큰을 새로 입력해주세요.' };
+    if (repoRes.status === 404) return { stage: 'repo', status: 404, message: `이 토큰으로는 저장소(${GH_OWNER}/${GH_REPO})에 접근할 수 없습니다. 토큰이 삭제·재발급됐거나, 발급 때 이 저장소를 선택하지 않았을 수 있습니다. 토큰을 새로 입력해주세요.` };
+    if (!repoRes.ok) return { stage: 'repo', status: repoRes.status, message: `${repoRes.status} - 저장소 접근 단계에서 알 수 없는 오류. 잠시 후 다시 시도해주세요.` };
+
+    // 2) 저장소는 접근되니, 이제 실제 파일이 있는지 확인
     const res = await fetch(`${GH_API}/contents/${PATHS.users}?ref=${GH_BRANCH}&_=${Date.now()}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
       cache: 'no-store'
     });
-    if (res.status === 404) return { status: 404, message: `404 - 저장소(${GH_OWNER}/${GH_REPO}) 또는 data/users.json 파일을 못 찾음. 저장소 이름 오타이거나, 토큰이 이 저장소에 대한 접근 권한이 없을 수 있습니다.` };
-    if (res.status === 401) return { status: 401, message: '401 - 토큰이 잘못됐거나(오타/복사 실수) 만료됨.' };
-    if (res.status === 403) return { status: 403, message: '403 - 토큰 권한 부족. 발급할 때 이 저장소에 대해 Contents: Read and write 권한을 선택했는지 다시 확인하세요.' };
-    if (res.ok) return { status: 200, message: '정상 (데이터를 찾았습니다)' };
-    return { status: res.status, message: `${res.status} - 알 수 없는 오류` };
+    if (res.status === 404) return { stage: 'file', status: 404, message: '저장소에는 접근되지만 data/users.json 파일이 없습니다(최초 설치 상태).' };
+    if (res.status === 403) return { stage: 'file', status: 403, message: '403 - 저장소는 보이는데 Contents 권한이 부족합니다. 토큰 권한을 Read and write로 다시 확인하세요.' };
+    if (res.ok) return { stage: 'ok', status: 200, message: '정상 (데이터를 찾았습니다)' };
+    return { stage: 'file', status: res.status, message: `${res.status} - 알 수 없는 오류` };
   } catch (err) {
-    return { status: 0, message: '네트워크 오류: ' + (err.message || err) };
+    return { stage: 'repo', status: 0, message: '네트워크 오류(인터넷 연결, 방화벽 또는 확장프로그램이 api.github.com 요청을 막고 있을 수 있음): ' + (err.message || err) };
   }
+}
+
+function showTokenGate(message) {
+  document.getElementById('bootScreen').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('tokenGateScreen').style.display = 'flex';
+  const gm = document.getElementById('gateMsg');
+  gm.style.color = '#c62828';
+  gm.textContent = message || '';
 }
 
 document.getElementById('gateBtn').onclick = async () => {
@@ -348,6 +369,14 @@ document.getElementById('gateBtn').onclick = async () => {
   msg.style.color = '#888';
   msg.textContent = '확인 중...';
   const diag = await diagnoseToken(token);
+  if (diag.stage === 'file' && diag.status === 404) {
+    // 토큰은 정상이고 저장소도 접근되는데 users.json이 없음 = 진짜 최초 설치
+    setToken(token);
+    document.getElementById('tokenGateScreen').style.display = 'none';
+    document.getElementById('bootScreen').style.display = 'flex';
+    document.getElementById('boot_token').value = token;
+    return;
+  }
   if (diag.status !== 200) {
     msg.style.color = '#c62828';
     msg.textContent = diag.message;
@@ -357,7 +386,7 @@ document.getElementById('gateBtn').onclick = async () => {
   const users = await readJSON(PATHS.users, null);
   document.getElementById('tokenGateScreen').style.display = 'none';
   if (users === null) {
-    document.getElementById('bootScreen').style.display = 'flex';
+    showTokenGate('데이터를 일시적으로 불러오지 못했습니다. 잠시 후 다시 시도해주세요.');
   } else {
     const raw = sessionStorage.getItem('slog_session');
     if (raw) { session = JSON.parse(raw); enterApp(); }
@@ -371,6 +400,10 @@ document.getElementById('bootBtn').onclick = async () => {
   const name = document.getElementById('boot_name').value.trim();
   const msg = document.getElementById('bootMsg');
   if (!token || !empId || !name) { msg.textContent = '모든 항목을 입력하세요.'; return; }
+  msg.textContent = '안전 확인 중...';
+  const diag = await diagnoseToken(token);
+  if (diag.stage === 'ok') { msg.textContent = '이 저장소에는 이미 데이터가 있습니다. 초기화하면 기존 데이터가 지워지므로 진행하지 않습니다. 페이지를 새로고침해서 로그인하세요.'; return; }
+  if (!(diag.stage === 'file' && diag.status === 404)) { msg.textContent = '초기화를 진행할 수 없습니다: ' + diag.message; return; }
   setToken(token);
   const res = await commitFiles({
     [PATHS.users]: [{ empId, name, password: empId, role: '관리자', status: '사용' }],
