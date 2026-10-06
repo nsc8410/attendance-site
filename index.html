@@ -165,24 +165,28 @@ function b64DecodeUnicode(b64) {
   return new TextDecoder('utf-8').decode(bytes);
 }
 
+// GitHub는 기본 방식으로 읽으면 1MB가 넘는 파일의 내용을 "빈 문자열"로 돌려준다.
+// (출석기록·조합원 명단은 쌓이면 1MB를 넘는다.) raw 방식으로 요청하면 큰 파일도 내용을 그대로 준다.
+async function ghReadRaw(path) {
+  const url = `${GH_API}/contents/${path}?ref=${GH_BRANCH}&_=${Date.now()}`;
+  const call = (accept) => fetch(url, { headers: { Authorization: `Bearer ${getToken()}`, Accept: accept }, cache: 'no-store' });
+  let res = await call('application/vnd.github.raw+json');
+  if (res.status === 415 || res.status === 406) res = await call('application/vnd.github.v3.raw');
+  return res;
+}
+
+// 반환 규칙: 파일이 정말 없을 때(404)만 fallback을 돌려준다.
+// 그 밖의 읽기 실패는 오류를 던진다 -> "읽기 실패를 빈 데이터로 착각하고 그 위에 덮어써서 기존 데이터를 지우는" 사고를 막는다.
 async function readJSON(path, fallback) {
-  // 토큰(=쓰기 권한)이 있는 사람은 GitHub API로 직접 읽어 지연 없이 항상 최신 상태를 본다.
-  // 토큰 없는 순수 조회자는 raw.githubusercontent.com을 쓰며, 드물게 몇 분 지연될 수 있다.
   if (getToken()) {
-    try {
-      const res = await fetch(`${GH_API}/contents/${path}?ref=${GH_BRANCH}&_=${Date.now()}`, {
-        headers: { Authorization: `Bearer ${getToken()}`, Accept: 'application/vnd.github+json' },
-        cache: 'no-store'
-      });
-      if (res.status === 404) return fallback;
-      if (res.ok) {
-        const json = await res.json();
-        return JSON.parse(b64DecodeUnicode(json.content));
-      }
-    } catch (err) {
-      // 실패하면 아래 raw 방식으로 폴백
-    }
+    const res = await ghReadRaw(path);
+    if (res.status === 404) return fallback;
+    if (!res.ok) throw new Error(`${path} 읽기 실패 (${res.status})`);
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch (e) { throw new Error(`${path} 내용을 해석하지 못했습니다`); }
   }
+  // 토큰이 없는 사람: raw.githubusercontent.com (비공개 저장소면 어차피 막힘)
   const url = `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/${path}?t=${Date.now()}`;
   try {
     const res = await fetch(url, { cache: 'no-store' });
@@ -221,18 +225,25 @@ async function commitFiles(filesObj, message, retries = 6) {
   return commitFilesAtomic(filesObj, message, retries);
 }
 
+async function getFileSha(path) {
+  try {
+    const cur = await ghFetch(`/contents/${path}?ref=${GH_BRANCH}&_=${Date.now()}`);
+    if (cur && cur.sha) return cur.sha;
+  } catch (e) { /* 아래 폴더 목록으로 재시도 */ }
+  try {
+    const dir = path.split('/').slice(0, -1).join('/');
+    const list = await ghFetch(`/contents/${dir}?ref=${GH_BRANCH}&_=${Date.now()}`);
+    const hit = Array.isArray(list) ? list.find(x => x.path === path) : null;
+    return hit ? hit.sha : undefined;
+  } catch (e) { return undefined; }
+}
+
 async function commitSingleFile(path, data, message, retries = 6) {
   const content = b64EncodeUnicode(JSON.stringify(data, null, 2));
   let lastErr = null;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      let sha;
-      try {
-        const cur = await ghFetch(`/contents/${path}?ref=${GH_BRANCH}&_=${Date.now()}`);
-        sha = cur.sha;
-      } catch (e) {
-        sha = undefined; // 파일이 아직 없으면 새로 생성
-      }
+      const sha = await getFileSha(path); // 파일이 아직 없으면 undefined(새로 생성)
       const body = { message, content, branch: GH_BRANCH };
       if (sha) body.sha = sha;
       await ghFetch(`/contents/${path}`, { method: 'PUT', body: JSON.stringify(body) });
@@ -311,7 +322,9 @@ function requireToken() {
 let session = null;
 
 (async function init() {
-  const users = await readJSON(PATHS.users, null);
+  let users;
+  try { users = await readJSON(PATHS.users, null); }
+  catch (e) { showTokenGate('데이터를 읽는 중 오류가 났습니다: ' + e.message + ' · 잠시 후 새로고침(F5)해 주세요.'); return; }
   if (users !== null) {
     const raw = sessionStorage.getItem('slog_session');
     if (raw) { session = JSON.parse(raw); enterApp(); }
@@ -390,7 +403,9 @@ document.getElementById('gateBtn').onclick = async () => {
     return; // 실패 원인을 보여주고, 최초 설정 화면으로 넘어가지 않는다 (데이터 보호)
   }
   setToken(token);
-  const users = await readJSON(PATHS.users, null);
+  let users;
+  try { users = await readJSON(PATHS.users, null); }
+  catch (e) { msg.style.color = '#c62828'; msg.textContent = '데이터를 읽는 중 오류가 났습니다: ' + e.message; return; }
   document.getElementById('tokenGateScreen').style.display = 'none';
   if (users === null) {
     showTokenGate('데이터를 일시적으로 불러오지 못했습니다. 잠시 후 다시 시도해주세요.');
@@ -431,7 +446,9 @@ async function doLogin() {
   const password = document.getElementById('loginPw').value;
   const msg = document.getElementById('loginMsg');
   if (!empId || !password) { msg.textContent = '사번과 비밀번호를 입력하세요.'; return; }
-  const users = await readJSON(PATHS.users, []);
+  let users;
+  try { users = await readJSON(PATHS.users, []); }
+  catch (e) { msg.textContent = '데이터를 읽지 못했습니다: ' + e.message; return; }
   const u = users.find(x => String(x.empId).trim() === empId);
   if (!u) { msg.textContent = '승인되지 않은 사번입니다.'; return; }
   if (u.status !== '사용') { msg.textContent = '사용이 중지된 계정입니다.'; return; }
@@ -1407,10 +1424,9 @@ function diagnoseData(members, events, attendance, settings) {
   return {issues,valid,groups:[...groups.values()],total:mm.size,joined:participants.size,ratio,hours,pay:Number.isFinite(rate)&&rate>=0?Math.round(hours*rate):null,records:attendance.length};
 }
 async function dxRead(path) {
-  const token=getToken(); const url=token?`${GH_API}/contents/${path}?ref=${GH_BRANCH}&_=${Date.now()}`:`https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/${path}?t=${Date.now()}`;
-  const res=await fetch(url,{cache:'no-store',headers:token?{Authorization:`Bearer ${token}`,Accept:'application/vnd.github+json'}:{}});
-  if(!res.ok)throw new Error(`${path}: 불러오기 실패 (${res.status})`);
-  const value=await res.json();return token?JSON.parse(b64DecodeUnicode(value.content)):value;
+  const v = await readJSON(path, undefined);
+  if (v === undefined) throw new Error(`${path}: 파일을 찾을 수 없거나 읽을 수 없습니다`);
+  return v;
 }
 async function dxLoad(){const [m,e,a,s]=await Promise.all([dxRead(PATHS.members),dxRead(PATHS.events),dxRead(PATHS.attendance),dxRead(PATHS.settings)]);if(![m,e,a].every(x=>Array.isArray(x)&&x.every(r=>r&&typeof r==='object'))||!s||typeof s!=='object')throw new Error('데이터 형식이 올바르지 않습니다.');return {members:m,events:e,attendance:a,settings:s,result:diagnoseData(m,e,a,s)};}
 function dxTable(headers,rows){return `<div style="overflow:auto"><table style="width:100%"><thead><tr>${headers.map(h=>`<th>${dxEsc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${dxEsc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;}
@@ -1425,6 +1441,19 @@ async function renderRoster(content){content.innerHTML='<div class="card">연명
 let dxSequence=0;
 async function dxBanner(){if(!session||!isAdmin())return;const sequence=++dxSequence;const box=document.getElementById('dxBanner');if(!box)return;box.textContent='데이터 자동 검사 중...';try{const {result:d}=await dxLoad();if(sequence!==dxSequence)return;box.innerHTML=`<strong>자동 진단</strong> · 오류 ${d.issues.filter(i=>i.level==='오류').length}건 / 주의 ${d.issues.filter(i=>i.level==='주의').length}건 · 참여율 ${d.ratio.toFixed(2)}% <button class="ghost" id="dxOpen">결과 보기</button> <button class="ghost" id="dxRecheck">다시 검사</button> <span style="color:#888;font-size:12px">로그인 시점 기준 · 저장 후에는 '다시 검사'</span>`;document.getElementById('dxOpen').onclick=()=>goTab('diagnosis');document.getElementById('dxRecheck').onclick=()=>dxBanner();}catch(e){if(sequence===dxSequence)box.textContent='자동 진단 대기: '+e.message;}}
 
+
+// 안전망: 읽기/저장 중 예상 못한 오류가 나면 열려 있던 창을 닫고, 실패했음을 분명히 보여준다. (저장은 이뤄지지 않은 상태)
+window.addEventListener('unhandledrejection', (ev) => {
+  ev.preventDefault();
+  if (!session) return;
+  const msg = String((ev.reason && ev.reason.message) || ev.reason || '알 수 없는 오류');
+  document.querySelectorAll('.modal-bg').forEach(n => n.remove());
+  const c = document.getElementById('content');
+  const active = document.querySelector('.tabbtn.primary');
+  const tab = active ? active.dataset.tab : 'events';
+  c.innerHTML = `<div class="card"><b>작업을 완료하지 못했습니다.</b><div class="notice">${esc(msg)}</div><p style="font-size:13px;color:#555">저장은 이뤄지지 않았습니다. 잠시 후 다시 시도해 보시고, 계속되면 관리자에게 알려주세요.</p><button class="primary" id="retryTabBtn">다시 시도</button></div>`;
+  document.getElementById('retryTabBtn').onclick = () => goTab(tab);
+});
 </script>
 </body>
 </html>
