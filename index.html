@@ -175,7 +175,15 @@ async function ghReadRaw(path) {
 
 // 반환 규칙: 파일이 정말 없을 때(404)만 fallback을 돌려준다.
 // 그 밖의 읽기 실패는 오류를 던진다 -> "읽기 실패를 빈 데이터로 착각하고 그 위에 덮어써서 기존 데이터를 지우는" 사고를 막는다.
-async function readJSON(path, fallback) {
+const _cache = {};   // { 경로: {data, at} }  -- 같은 화면을 오가며 같은 파일을 반복해서 내려받지 않도록 짧게 기억
+async function readJSON(path, fallback, maxAgeMs = 0) {
+  const c = _cache[path];
+  if (maxAgeMs > 0 && c && Date.now() - c.at < maxAgeMs) return c.data;
+  const data = await readJSONUncached(path, fallback);
+  if (getToken()) _cache[path] = { data, at: Date.now() };
+  return data;
+}
+async function readJSONUncached(path, fallback) {
   if (getToken()) {
     const res = await ghReadRaw(path);
     if (res.status === 404) return fallback;
@@ -219,8 +227,11 @@ async function ghFetch(endpoint, options = {}) {
 // 원자적 커밋(Git Data API, 6단계) 방식을 그대로 쓴다.
 async function commitFiles(filesObj, message, retries = 6) {
   const paths = Object.keys(filesObj);
-  if (paths.length === 1) return commitSingleFile(paths[0], filesObj[paths[0]], message, retries);
-  return commitFilesAtomic(filesObj, message, retries);
+  const res = paths.length === 1
+    ? await commitSingleFile(paths[0], filesObj[paths[0]], message, retries)
+    : await commitFilesAtomic(filesObj, message, retries);
+  if (res.ok) paths.forEach(p => { _cache[p] = { data: filesObj[p], at: Date.now() }; });
+  return res;
 }
 
 async function getFileSha(path) {
@@ -237,7 +248,7 @@ async function getFileSha(path) {
 }
 
 async function commitSingleFile(path, data, message, retries = 6) {
-  const content = b64EncodeUnicode(JSON.stringify(data, null, 2));
+  const content = b64EncodeUnicode(JSON.stringify(data));
   let lastErr = null;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
@@ -268,7 +279,7 @@ async function commitFilesAtomic(filesObj, message, retries = 6) {
 
       const treeEntries = [];
       for (const [path, data] of Object.entries(filesObj)) {
-        const content = JSON.stringify(data, null, 2);
+        const content = JSON.stringify(data);
         const blob = await ghFetch(`/git/blobs`, {
           method: 'POST',
           body: JSON.stringify({ content: b64EncodeUnicode(content), encoding: 'base64' })
@@ -471,7 +482,7 @@ function enterApp() {
   const dxb = document.getElementById('dxBanner');
   if (dxb) dxb.style.display = isAdmin() ? '' : 'none';
   goTab('events');
-  if (isAdmin()) dxBanner(); // 로그인할 때 한 번만 자동 검사 (저장할 때마다 다시 읽지 않음)
+  if (isAdmin()) { if (dxb) dxb.textContent = '자동 진단 준비 중...'; setTimeout(() => dxBanner(true), 3000); } // 첫 화면이 뜬 뒤 한 번만 자동 검사
 }
 
 document.getElementById('logoutBtn').onclick = () => {
@@ -665,9 +676,10 @@ async function openEventDetail(id, content) {
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal" style="width:560px;"><div class="empty">불러오는 중...</div></div>`;
   document.body.appendChild(bg);
-  const events = await readJSON(PATHS.events, []);
-  let attendance = await readJSON(PATHS.attendance, []);
-  const settings = await readJSON(PATHS.settings, { rate: 15000 });
+  const [events, attendance0, settings] = await Promise.all([
+    readJSON(PATHS.events, [], 30000), readJSON(PATHS.attendance, [], 30000), readJSON(PATHS.settings, { rate: 15000 }, 30000)
+  ]);
+  let attendance = attendance0;
   const ev = events.find(x => x.id === id);
   let count = attendance.filter(a => a.eventId === id).length;
   bg.querySelector('.modal').innerHTML = `
@@ -690,7 +702,8 @@ async function openEventDetail(id, content) {
     busyBtn.disabled = true;
     busyBtn.textContent = busyLabel;
     resDiv.textContent = '';
-    const members = await readJSON(PATHS.members, []);
+    const [members, freshAttendance] = await Promise.all([readJSON(PATHS.members, [], 300000), readJSON(PATHS.attendance, [])]);
+    attendance = freshAttendance;
     const memberMap = new Map(members.map(m => [String(m.empId).trim().toUpperCase(), m]));
     const existingSet = new Set(attendance.filter(a => a.eventId === id).map(a => String(a.empId).trim().toUpperCase()));
     let matched = 0, duplicated = 0;
@@ -1435,22 +1448,22 @@ function diagnoseData(members, events, attendance, settings) {
   const hours=valid.reduce((sum,a)=>{const h=Number(a.event.hours);return sum+(Number.isFinite(h)&&h>0&&h<=24?h:0);},0);
   return {issues,valid,groups:[...groups.values()],total:mm.size,joined:participants.size,ratio,hours,pay:Number.isFinite(rate)&&rate>=0?Math.round(hours*rate):null,records:attendance.length};
 }
-async function dxRead(path) {
-  const v = await readJSON(path, undefined);
+async function dxRead(path, maxAge = 0) {
+  const v = await readJSON(path, undefined, maxAge);
   if (v === undefined) throw new Error(`${path}: 파일을 찾을 수 없거나 읽을 수 없습니다`);
   return v;
 }
-async function dxLoad(){const [m,e,a,s]=await Promise.all([dxRead(PATHS.members),dxRead(PATHS.events),dxRead(PATHS.attendance),dxRead(PATHS.settings)]);if(![m,e,a].every(x=>Array.isArray(x)&&x.every(r=>r&&typeof r==='object'))||!s||typeof s!=='object')throw new Error('데이터 형식이 올바르지 않습니다.');return {members:m,events:e,attendance:a,settings:s,result:diagnoseData(m,e,a,s)};}
+async function dxLoad(maxAge=0){const [m,e,a,s]=await Promise.all([dxRead(PATHS.members,maxAge),dxRead(PATHS.events,maxAge),dxRead(PATHS.attendance,maxAge),dxRead(PATHS.settings,maxAge)]);if(![m,e,a].every(x=>Array.isArray(x)&&x.every(r=>r&&typeof r==='object'))||!s||typeof s!=='object')throw new Error('데이터 형식이 올바르지 않습니다.');return {members:m,events:e,attendance:a,settings:s,result:diagnoseData(m,e,a,s)};}
 function dxTable(headers,rows){return `<div style="overflow:auto"><table style="width:100%"><thead><tr>${headers.map(h=>`<th>${dxEsc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${dxEsc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;}
 function dxExcel(name,sheets){if(typeof XLSX==='undefined'){alert('Excel 기능을 불러오지 못했습니다. 인터넷 연결 후 새로고침하세요.');return;}const wb=XLSX.utils.book_new();sheets.forEach(([title,rows])=>{const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=rows[0].map(()=>({wch:22}));XLSX.utils.book_append_sheet(wb,ws,title);});XLSX.writeFile(wb,name);}
 let dxSequence=0;
-async function dxBanner(){
+async function dxBanner(useCache){
   if(!session||!isAdmin())return;
   const sequence=++dxSequence;
   const box=document.getElementById('dxBanner'); if(!box)return;
   box.textContent='데이터 자동 검사 중...';
   try{
-    const {result:d}=await dxLoad();
+    const {result:d}=await dxLoad(useCache?60000:0);
     if(sequence!==dxSequence)return;
     const errs=d.issues.filter(i=>i.level==='오류').length, warns=d.issues.filter(i=>i.level==='주의').length;
     const errHtml=errs?`<span style="color:#c62828;font-weight:700">오류 ${errs}건</span>`:`<span style="color:#1a7f37;font-weight:700">오류 없음</span>`;
