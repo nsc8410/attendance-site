@@ -115,8 +115,6 @@
     <h1 id="pageTitle" style="font-size:24px; margin:14px 0 4px;"></h1>
     <div id="pageDesc" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
     <div class="row-flex" style="margin-bottom:16px; flex-wrap:wrap;">
-      <button class="tabbtn ghost" data-tab="diagnosis">자동 진단</button>
-      <button class="tabbtn ghost" data-tab="roster">자동 연명부</button>
       <button class="tabbtn ghost" data-tab="events">일정 게시판</button>
       <button class="tabbtn ghost" data-tab="participation">참여 현황</button>
       <button class="tabbtn ghost" data-tab="aggregate">전체 집계</button>
@@ -459,7 +457,7 @@ async function doLogin() {
 }
 
 function isAdmin() { return !!session && session.role === '관리자'; }
-const ADMIN_ONLY_TABS = ['participation', 'aggregate', 'members', 'users', 'diagnosis', 'roster'];
+const ADMIN_ONLY_TABS = ['participation', 'aggregate', 'members', 'users'];
 
 function enterApp() {
   document.getElementById('bootScreen').style.display = 'none';
@@ -492,9 +490,7 @@ const TAB_META = {
   participation: ['참여 현황', '최근 일정별 참여 인원을 확인합니다.'],
   aggregate: ['전체 집계', '기간을 지정해 개인별 참여시간과 지급액을 합산합니다.'],
   members: ['조합원 명단', '사번은 정확일치, 이름은 앞글자부터 검색할 수 있습니다.'],
-  users: ['사용자 설정', 'GitHub 연결, 사용자 권한, 시간당 지급액을 관리합니다.'],
-  diagnosis: ['자동 진단', '전체 데이터를 자동 검사하고 지단별 참여율을 분석합니다.'],
-  roster: ['자동 연명부', '행사를 선택하면 지단별 참석 연명부를 생성합니다.']
+  users: ['사용자 설정', 'GitHub 연결, 사용자 권한, 시간당 지급액을 관리합니다.']
 };
 
 function goTab(tab) {
@@ -510,8 +506,6 @@ function goTab(tab) {
   if (tab === 'aggregate') renderAggregate(content);
   if (tab === 'members') renderMembers(content);
   if (tab === 'users') renderUsers(content);
-  if (tab === 'diagnosis') renderDiagnosis(content);
-  if (tab === 'roster') renderRoster(content);
 }
 
 // ============================================================
@@ -1431,15 +1425,37 @@ async function dxRead(path) {
 async function dxLoad(){const [m,e,a,s]=await Promise.all([dxRead(PATHS.members),dxRead(PATHS.events),dxRead(PATHS.attendance),dxRead(PATHS.settings)]);if(![m,e,a].every(x=>Array.isArray(x)&&x.every(r=>r&&typeof r==='object'))||!s||typeof s!=='object')throw new Error('데이터 형식이 올바르지 않습니다.');return {members:m,events:e,attendance:a,settings:s,result:diagnoseData(m,e,a,s)};}
 function dxTable(headers,rows){return `<div style="overflow:auto"><table style="width:100%"><thead><tr>${headers.map(h=>`<th>${dxEsc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${dxEsc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;}
 function dxExcel(name,sheets){if(typeof XLSX==='undefined'){alert('Excel 기능을 불러오지 못했습니다. 인터넷 연결 후 새로고침하세요.');return;}const wb=XLSX.utils.book_new();sheets.forEach(([title,rows])=>{const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=rows[0].map(()=>({wch:22}));XLSX.utils.book_append_sheet(wb,ws,title);});XLSX.writeFile(wb,name);}
-async function renderDiagnosis(content){
-  content.innerHTML='<div class="card">전체 데이터 자동 진단 중...</div>';
-  try{const data=await dxLoad();if(!content.isConnected||!document.querySelector('[data-tab="diagnosis"]').classList.contains('primary'))return;const d=data.result;
-  content.innerHTML=`<div class="card"><div class="row-flex" style="justify-content:space-between"><h2>자동 진단 결과</h2><button id="dxRefresh" class="ghost">새로 진단</button></div><p>전체 행사 기준 · ${dxEsc(new Date().toLocaleString('ko-KR'))}</p><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px">${[['조합원',d.total+'명'],['실제 참여자',d.joined+'명'],['참여율',d.ratio.toFixed(2)+'%'],['유효 출석',d.valid.length+'건'],['평균 참여횟수',(d.joined?d.valid.length/d.joined:0).toFixed(2)+'회'],['확인 사항',d.issues.length+'건']].map(([k,v])=>`<div class="card"><div>${k}</div><strong style="font-size:24px">${v}</strong></div>`).join('')}</div><p>원본 출석 ${d.records}건 / 중복·미등록·행사 누락 제외 ${d.valid.length}건. 지급 참고액 ${d.pay===null?'계산 불가':d.pay.toLocaleString()+'원'} (시간 오류 및 이름 불일치는 지급 전 확인).</p></div><div class="card"><h3>지단별 참여율</h3>${dxTable(['지단','명단 인원','참여자','참여율'],d.groups.sort((a,b)=>compareGroup(a.group,b.group)).map(g=>[g.group,g.total,g.joined,g.rate.toFixed(2)+'%']))}</div><div class="card"><div class="row-flex"><h3>자동 오류 검출</h3><select id="dxLevel"><option value="">전체</option><option>오류</option><option>주의</option><option>참고</option></select><button id="dxExport" class="primary">진단 Excel</button></div><p>오류를 자동 삭제하거나 원본을 변경하지 않습니다. 목록은 500건까지 표시하며 Excel에는 전체 결과를 담습니다.</p><div id="dxIssues"></div></div>`;
-  const paint=()=>{const rows=d.issues.filter(i=>!document.getElementById('dxLevel').value||i.level===document.getElementById('dxLevel').value);document.getElementById('dxIssues').innerHTML=rows.length?dxTable(['등급','유형','사번/행사/지단','내용'],rows.slice(0,500).map(i=>[i.level,i.type,i.id,i.detail])):'<p>검출된 확인 사항이 없습니다.</p>';};paint();document.getElementById('dxLevel').onchange=paint;document.getElementById('dxRefresh').onclick=()=>renderDiagnosis(content);document.getElementById('dxExport').onclick=()=>dxExcel('자동진단.xlsx',[['오류목록',[['등급','유형','사번/행사/지단','내용'],...d.issues.map(i=>[i.level,i.type,i.id,i.detail])]],['지단분석',[['지단','명단 인원','참여자','참여율(%)'],...d.groups.map(g=>[g.group,g.total,g.joined,g.rate])]]]);
-  }catch(e){content.innerHTML=`<div class="card">진단을 완료하지 못했습니다. ${dxEsc(e.message)}<p>불러오기 실패를 빈 데이터나 정상 상태로 판단하지 않습니다.</p><button class="ghost" id="dxRetry">다시 시도</button></div>`;document.getElementById('dxRetry').onclick=()=>renderDiagnosis(content);}}
-async function renderRoster(content){content.innerHTML='<div class="card">연명부 준비 중...</div>';try{const data=await dxLoad();const evs=[...data.events].sort((a,b)=>String(b.date??'').localeCompare(String(a.date??''))||String(b.id??'').localeCompare(String(a.id??'')));content.innerHTML=`<div class="card"><h2>행사별 자동 연명부</h2><select id="rsEvent" style="max-width:100%"><option value="">행사를 선택하세요</option>${evs.map((e,i)=>`<option value="${i}">${dxEsc(e.date)} · ${dxEsc(e.name)}</option>`).join('')}</select><button class="primary" id="rsExcel" disabled>Excel 다운로드</button> <button class="ghost" id="rsPrint" disabled>인쇄 / PDF 저장</button><p>지단·사번순으로 정렬하고 동일 행사 중복 사번은 한 번만 표시합니다. 전화번호·계좌정보는 포함하지 않습니다.</p><div id="rsBody"></div></div>`;let chosen=null,rows=[];const headers=['번호','지단','소속','성명','사번','서명'];document.getElementById('rsEvent').onchange=e=>{chosen=e.target.value===''?null:evs[Number(e.target.value)];rows=chosen?data.result.valid.filter(a=>dxKey(a.eventId)===dxKey(chosen.id)).sort((a,b)=>compareGroup(a.member.group,b.member.group)||dxKey(a.empId).localeCompare(dxKey(b.empId))).map((a,i)=>[i+1,a.member.group||'미지정',a.member.dept||'',a.member.name,String(a.member.empId),'']):[];document.getElementById('rsExcel').disabled=document.getElementById('rsPrint').disabled=!chosen;document.getElementById('rsBody').innerHTML=chosen?`<h3>${dxEsc(chosen.name)}</h3><p>${dxEsc(chosen.date)} · ${dxEsc(chosen.start)}시~${dxEsc(chosen.end)}시 · ${dxEsc(chosen.hours)}시간 · ${rows.length}명</p><p>행사 관련 확인 사항 ${data.result.issues.filter(i=>i.id===String(chosen.id)||i.detail.includes(dxKey(chosen.id))).length}건. 미등록 사번·행사 누락은 제외하며 이름은 조합원 명단 기준입니다.</p>${dxTable(headers,rows)}`:'';};document.getElementById('rsExcel').onclick=()=>{if(chosen)dxExcel('행사_연명부.xlsx',[['연명부',[[chosen.name],[chosen.date,`${chosen.start}시~${chosen.end}시`,`${chosen.hours}시간`],headers,...rows]]]);};document.getElementById('rsPrint').onclick=()=>{if(!chosen)return;const w=window.open('','_blank');if(!w){alert('인쇄 창을 열도록 팝업을 허용하세요.');return;}w.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>참석 연명부</title><style>@page{size:A4;margin:15mm}body{font-family:Arial,sans-serif}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #888;padding:9px}thead{display:table-header-group}tr{break-inside:avoid}h1{font-size:22px}</style></head><body><h1>${dxEsc(chosen.name)} 참석 연명부</h1><p>${dxEsc(chosen.date)} / ${dxEsc(chosen.start)}시~${dxEsc(chosen.end)}시 / ${rows.length}명</p>${dxTable(headers,rows)}</body></html>`);w.document.close();w.focus();w.print();};}catch(e){content.innerHTML=`<div class="card">연명부 생성 실패: ${dxEsc(e.message)}</div>`;}}
 let dxSequence=0;
-async function dxBanner(){if(!session||!isAdmin())return;const sequence=++dxSequence;const box=document.getElementById('dxBanner');if(!box)return;box.textContent='데이터 자동 검사 중...';try{const {result:d}=await dxLoad();if(sequence!==dxSequence)return;box.innerHTML=`<strong>자동 진단</strong> · 오류 ${d.issues.filter(i=>i.level==='오류').length}건 / 주의 ${d.issues.filter(i=>i.level==='주의').length}건 · 참여율 ${d.ratio.toFixed(2)}% <button class="ghost" id="dxOpen">결과 보기</button> <button class="ghost" id="dxRecheck">다시 검사</button> <span style="color:#888;font-size:12px">로그인 시점 기준 · 저장 후에는 '다시 검사'</span>`;document.getElementById('dxOpen').onclick=()=>goTab('diagnosis');document.getElementById('dxRecheck').onclick=()=>dxBanner();}catch(e){if(sequence===dxSequence)box.textContent='자동 진단 대기: '+e.message;}}
+async function dxBanner(){
+  if(!session||!isAdmin())return;
+  const sequence=++dxSequence;
+  const box=document.getElementById('dxBanner'); if(!box)return;
+  box.textContent='데이터 자동 검사 중...';
+  try{
+    const {result:d}=await dxLoad();
+    if(sequence!==dxSequence)return;
+    const errs=d.issues.filter(i=>i.level==='오류').length, warns=d.issues.filter(i=>i.level==='주의').length;
+    box.innerHTML=`<div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div><strong>자동 진단</strong> · 오류 ${errs}건 / 주의 ${warns}건 · 참여율 ${d.ratio.toFixed(2)}%</div><div class="row-flex"><button class="ghost" id="dxToggle">결과 보기</button><button class="ghost" id="dxRecheck">다시 검사</button></div></div><div style="color:#888;font-size:12px;margin-top:4px">로그인 시점 기준 · 저장 후에는 '다시 검사'를 눌러주세요. 원본 데이터는 수정하지 않습니다.</div><div id="dxDetail" style="display:none;margin-top:12px"></div>`;
+    document.getElementById('dxRecheck').onclick=()=>dxBanner();
+    const order={'오류':0,'주의':1,'참고':2};
+    const sorted=[...d.issues].sort((a,b)=>(order[a.level]??9)-(order[b.level]??9));
+    document.getElementById('dxToggle').onclick=()=>{
+      const el=document.getElementById('dxDetail'), btn=document.getElementById('dxToggle');
+      const open=el.style.display==='none';
+      el.style.display=open?'':'none'; btn.textContent=open?'접기':'결과 보기';
+      if(open&&!el.dataset.painted){
+        el.dataset.painted='1';
+        el.innerHTML=(sorted.length?`<p style="font-size:13px;color:#555">총 ${sorted.length}건${sorted.length>200?' · 화면에는 앞의 200건만 표시하고 Excel에는 전체가 담깁니다':''}</p>${dxTable(['등급','유형','사번/행사/지단','내용'],sorted.slice(0,200).map(i=>[i.level,i.type,i.id,i.detail]))}`:'<p>검출된 확인 사항이 없습니다.</p>')+`<div style="margin-top:10px"><button class="primary" id="dxExport">진단 Excel</button></div>`;
+        document.getElementById('dxExport').onclick=()=>dxExcel('자동진단.xlsx',[['오류목록',[['등급','유형','사번/행사/지단','내용'],...sorted.map(i=>[i.level,i.type,i.id,i.detail])]],['지단분석',[['지단','명단 인원','참여자','참여율(%)'],...d.groups.map(g=>[g.group,g.total,g.joined,g.rate])]]]);
+      }
+    };
+  }catch(e){
+    if(sequence===dxSequence){
+      box.innerHTML=`자동 진단 대기: ${dxEsc(e.message)} <button class="ghost" id="dxRecheck">다시 검사</button>`;
+      document.getElementById('dxRecheck').onclick=()=>dxBanner();
+    }
+  }
+}
 
 
 // 안전망: 읽기/저장 중 예상 못한 오류가 나면 열려 있던 창을 닫고, 실패했음을 분명히 보여준다. (저장은 이뤄지지 않은 상태)
