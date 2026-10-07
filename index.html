@@ -1401,16 +1401,34 @@ function openAddUserModal(content, currentUsers, currentSettings) {
   };
 }
 // 자동 진단과 연명부: 원본 데이터는 수정하지 않고 분석합니다.
+const DX_HELP = {
+  '중복 사번':'명단에 같은 사번이 두 번 있습니다. 한 명만 남기고 정리하세요.',
+  '사번 누락':'명단에 사번이 비어 있는 행이 있습니다.',
+  '이름 누락':'조합원 이름이 비어 있습니다. 명단에서 채워 주세요.',
+  '소속 누락':'지단 또는 소속이 비어 있습니다. 집계 엑셀에 빈칸(미지정)으로 나옵니다. 급하지 않으면 두셔도 됩니다.',
+  '행사 ID 오류':'일정 데이터에 문제가 있을 수 있습니다. 관리자에게 알려주세요.',
+  '행사 날짜 오류':'날짜 형식이 잘못됐습니다. 일정을 삭제하고 다시 등록하세요.',
+  '참여시간 오류':'저장된 참여시간이 비정상입니다. 일정을 다시 등록하세요.',
+  '행사 시간 불일치':'시작·종료 시각으로 계산한 시간(점심 제외)과 저장된 참여시간이 다릅니다. 지급액은 저장된 참여시간으로 계산되니 맞는 값인지 확인하세요. 예전 방식으로 등록한 일정이면 정상일 수 있습니다.',
+  '동일 행사 중복':'같은 행사에 같은 사람이 두 번 들어 있습니다. 수당이 이중으로 계산될 수 있어 확인이 필요합니다.',
+  '미등록 사번':'출석 기록의 사번이 현재 명단에 없습니다(삭제됐거나 오타). 집계에는 포함되지만 지단·계좌 정보가 비어 나옵니다.',
+  '행사 누락':'출석 기록이 이미 삭제된 행사를 가리킵니다. 집계에는 포함되지 않습니다.',
+  '이름 불일치':'출석에 저장된 이름과 명단의 이름이 다릅니다(개명·오타). 지급액에는 영향이 없지만 입금할 때 이름을 확인하세요.',
+  '참석기록 없음':'이 행사에 등록된 참석자가 없습니다. 아직 업로드 전이거나 참석자가 없는 행사라면 무시하셔도 됩니다.',
+  '지급단가 오류':'시간당 지급액 설정이 비정상입니다. 사용자 설정에서 확인하세요.',
+  '지단 참여율 낮음':'전체 평균보다 참여율이 낮은 지단입니다. 참고용입니다.'
+};
 const dxKey = v => String(v ?? '').trim().toUpperCase();
 const dxEsc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function diagnoseData(members, events, attendance, settings) {
   const issues=[], mm=new Map(), em=new Map(), seen=new Set(), valid=[], participants=new Set();
   const issue=(level,type,id,detail)=>issues.push({level,type,id:String(id??''),detail});
+  const evLabel=e=>(`${e.date??''} ${e.name??''}`.trim())||String(e.id??'');
   members.forEach((m,i)=>{const k=dxKey(m.empId); if(!k) issue('오류','사번 누락',i+1,'명단 행 번호'); else if(mm.has(k)) issue('오류','중복 사번',k,'명단에서 중복된 사번'); else mm.set(k,m); if(!String(m.name??'').trim()) issue('오류','이름 누락',k,'조합원 이름이 비어 있음'); if(!String(m.group??'').trim()||!String(m.dept??'').trim()) issue('주의','소속 누락',k,'지단 또는 소속이 비어 있음');});
-  events.forEach(e=>{const k=dxKey(e.id); if(!k||em.has(k)) issue('오류','행사 ID 오류',k,'행사 ID 누락 또는 중복'); else em.set(k,e); const h=Number(e.hours); const date=String(e.date??''); if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date) issue('오류','행사 날짜 오류',k,date); if(e.hours==null||e.hours===''||!Number.isFinite(h)||h<=0||h>24) issue('오류','참여시간 오류',k,String(e.hours)); else if(!Number.isFinite(Number(e.start))||!Number.isFinite(Number(e.end))||Number(e.start)<0||Number(e.end)>24||Number(e.start)>23||Number(e.end)<0||Number(e.end)===Number(e.start)||Math.abs(computeHours(Number(e.start),Number(e.end))-h)>.001) issue('주의','행사 시간 불일치',k,'시작·종료 시간과 점심 제외 참여시간 확인');});
-  attendance.forEach((a,i)=>{const k=dxKey(a.empId), ek=dxKey(a.eventId), pair=JSON.stringify([ek,k]), m=mm.get(k), e=em.get(ek); if(seen.has(pair)){issue('오류','동일 행사 중복',k,`${ek} · 출석 행 ${i+1}`);return;} seen.add(pair); if(!m) issue('오류','미등록 사번',k,`행사 ${ek}`); if(!e) issue('오류','행사 누락',k,`존재하지 않는 행사 ${ek}`); if(m&&dxKey(a.name)!==dxKey(m.name)) issue('주의','이름 불일치',k,`출석: ${a.name??'(빈칸)'} / 명단: ${m.name}`); if(m&&e){valid.push({...a,member:m,event:e});participants.add(k);}});
+  events.forEach(e=>{const k=dxKey(e.id); if(!k||em.has(k)) issue('오류','행사 ID 오류',k,'행사 ID 누락 또는 중복'); else em.set(k,e); const h=Number(e.hours); const date=String(e.date??''); if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date) issue('오류','행사 날짜 오류',evLabel(e),`${evLabel(e)} · 입력된 날짜: ${date||'(없음)'}`); if(e.hours==null||e.hours===''||!Number.isFinite(h)||h<=0||h>24) issue('오류','참여시간 오류',evLabel(e),`${evLabel(e)} · 저장된 참여시간: ${e.hours??'(없음)'}`); else if(!Number.isFinite(Number(e.start))||!Number.isFinite(Number(e.end))||Number(e.start)<0||Number(e.end)>24||Number(e.start)>23||Number(e.end)<0||Number(e.end)===Number(e.start)||Math.abs(computeHours(Number(e.start),Number(e.end))-h)>.001) {const sN=Number(e.start),eN=Number(e.end),calc=(Number.isFinite(sN)&&Number.isFinite(eN))?computeHours(sN,eN):null;issue('주의','행사 시간 불일치',evLabel(e),`${evLabel(e)} · 시작 ${e.start}~종료 ${e.end} → 점심 제외 ${calc===null?'계산 불가(예전 형식)':calc+'시간'} / 저장된 값 ${e.hours}시간`);}});
+  attendance.forEach((a,i)=>{const k=dxKey(a.empId), ek=dxKey(a.eventId), pair=JSON.stringify([ek,k]), m=mm.get(k), e=em.get(ek); if(seen.has(pair)){issue('오류','동일 행사 중복',k,`${e?evLabel(e):ek} · 출석 행 ${i+1}`);return;} seen.add(pair); if(!m) issue('오류','미등록 사번',k,`행사 ${e?evLabel(e):ek}`); if(!e) issue('오류','행사 누락',k,`존재하지 않는 행사 ${ek}`); if(m&&dxKey(a.name)!==dxKey(m.name)) issue('주의','이름 불일치',k,`출석: ${a.name??'(빈칸)'} / 명단: ${m.name}`); if(m&&e){valid.push({...a,member:m,event:e});participants.add(k);}});
   const rate=Number(settings.rate); if(settings.rate==null||settings.rate===''||!Number.isFinite(rate)||rate<0) issue('오류','지급단가 오류','설정','시간당 지급액 확인');
-  const counted=new Set(valid.map(a=>dxKey(a.eventId))); events.forEach(e=>{if(!counted.has(dxKey(e.id)))issue('주의','참석기록 없음',e.id,`${e.name??''} · 대상 명단이 없으므로 결석 판정은 하지 않음`);});
+  const counted=new Set(valid.map(a=>dxKey(a.eventId))); events.forEach(e=>{if(!counted.has(dxKey(e.id)))issue('주의','참석기록 없음',evLabel(e),`${evLabel(e)} · 이 행사에 등록된 참석자가 없음`);});
   const groups=new Map(); mm.forEach((m,k)=>{const g=String(m.group||'미지정');if(!groups.has(g))groups.set(g,{group:g,total:0,joined:0});const row=groups.get(g);row.total++;if(participants.has(k))row.joined++;});
   const ratio=mm.size?participants.size/mm.size*100:0;
   groups.forEach(g=>{g.rate=g.total?g.joined/g.total*100:0;if(g.total>=10&&ratio-g.rate>=15) issue('참고','지단 참여율 낮음',g.group,`전체보다 ${(ratio-g.rate).toFixed(1)}%p 낮음 (전체 행사 기준)`);});
@@ -1435,18 +1453,23 @@ async function dxBanner(){
     const {result:d}=await dxLoad();
     if(sequence!==dxSequence)return;
     const errs=d.issues.filter(i=>i.level==='오류').length, warns=d.issues.filter(i=>i.level==='주의').length;
-    box.innerHTML=`<div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div><strong>자동 진단</strong> · 오류 ${errs}건 / 주의 ${warns}건 · 참여율 ${d.ratio.toFixed(2)}%</div><div class="row-flex"><button class="ghost" id="dxToggle">결과 보기</button><button class="ghost" id="dxRecheck">다시 검사</button></div></div><div style="color:#888;font-size:12px;margin-top:4px">로그인 시점 기준 · 저장 후에는 '다시 검사'를 눌러주세요. 원본 데이터는 수정하지 않습니다.</div><div id="dxDetail" style="display:none;margin-top:12px"></div>`;
+    const errHtml=errs?`<span style="color:#c62828;font-weight:700">오류 ${errs}건</span>`:`<span style="color:#1a7f37;font-weight:700">오류 없음</span>`;
+    box.innerHTML=`<div class="row-flex" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div><strong>자동 진단</strong> · ${errHtml} · 주의 ${warns}건<span style="color:#888"> (확인 권장)</span> · 참여율 ${d.ratio.toFixed(2)}%</div><div class="row-flex"><button class="ghost" id="dxToggle">무엇인지 보기</button><button class="ghost" id="dxRecheck">다시 검사</button></div></div><div style="color:#888;font-size:12px;margin-top:4px">로그인 시점 기준 · 저장 후에는 '다시 검사'를 눌러주세요. 원본 데이터는 수정하지 않습니다.</div><div id="dxDetail" style="display:none;margin-top:12px"></div>`;
     document.getElementById('dxRecheck').onclick=()=>dxBanner();
     const order={'오류':0,'주의':1,'참고':2};
-    const sorted=[...d.issues].sort((a,b)=>(order[a.level]??9)-(order[b.level]??9));
+    const sorted=[...d.issues].sort((a,b)=>(order[a.level]??9)-(order[b.level]??9)||String(a.type).localeCompare(String(b.type),'ko'));
+    const counts=new Map(); sorted.forEach(i=>{const k=i.level+' · '+i.type; counts.set(k,(counts.get(k)||0)+1);});
+    const header=['등급','유형','대상','내용','무슨 뜻 / 할 일'];
+    const rowOf=i=>[i.level,i.type,i.id,i.detail,DX_HELP[i.type]||''];
     document.getElementById('dxToggle').onclick=()=>{
       const el=document.getElementById('dxDetail'), btn=document.getElementById('dxToggle');
       const open=el.style.display==='none';
-      el.style.display=open?'':'none'; btn.textContent=open?'접기':'결과 보기';
+      el.style.display=open?'':'none'; btn.textContent=open?'접기':'무엇인지 보기';
       if(open&&!el.dataset.painted){
         el.dataset.painted='1';
-        el.innerHTML=(sorted.length?`<p style="font-size:13px;color:#555">총 ${sorted.length}건${sorted.length>200?' · 화면에는 앞의 200건만 표시하고 Excel에는 전체가 담깁니다':''}</p>${dxTable(['등급','유형','사번/행사/지단','내용'],sorted.slice(0,200).map(i=>[i.level,i.type,i.id,i.detail]))}`:'<p>검출된 확인 사항이 없습니다.</p>')+`<div style="margin-top:10px"><button class="primary" id="dxExport">진단 Excel</button></div>`;
-        document.getElementById('dxExport').onclick=()=>dxExcel('자동진단.xlsx',[['오류목록',[['등급','유형','사번/행사/지단','내용'],...sorted.map(i=>[i.level,i.type,i.id,i.detail])]],['지단분석',[['지단','명단 인원','참여자','참여율(%)'],...d.groups.map(g=>[g.group,g.total,g.joined,g.rate])]]]);
+        const summary=[...counts].map(([k,n])=>`${dxEsc(k)} ${n}건`).join(' / ');
+        el.innerHTML=(sorted.length?`<p style="font-size:13px"><b>요약</b>: ${summary}</p><p style="font-size:12px;color:#888">오류는 고치셔야 하고, 주의는 확인만 하시면 됩니다. 총 ${sorted.length}건${sorted.length>200?' · 화면에는 앞의 200건만 표시하고 Excel에는 전체가 담깁니다':''}</p>${dxTable(header,sorted.slice(0,200).map(rowOf))}`:'<p>검출된 확인 사항이 없습니다.</p>')+`<div style="margin-top:10px"><button class="primary" id="dxExport">진단 Excel</button></div>`;
+        document.getElementById('dxExport').onclick=()=>dxExcel('자동진단.xlsx',[['확인목록',[header,...sorted.map(rowOf)]],['지단분석',[['지단','명단 인원','참여자','참여율(%)'],...d.groups.map(g=>[g.group,g.total,g.joined,g.rate])]]]);
       }
     };
   }catch(e){
